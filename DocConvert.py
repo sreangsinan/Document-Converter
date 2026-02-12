@@ -20,19 +20,20 @@ import pytesseract
 from pdf2image import convert_from_path
 from PyPDF2 import PdfReader, PdfWriter, PdfMerger
 import ffmpeg
-from flask import Flask # បន្ថែមសម្រាប់ Render
+from flask import Flask 
 
-# --- Flask Server សម្រាប់ Render ---
+# --- Flask Server សម្រាប់ Health Check លើ Render ---
 app = Flask(__name__)
 @app.route('/')
 def health_check():
     return "Bot is running!", 200
 
 def run_flask():
+    # Render ផ្ដល់ Port តាមរយៈ Environment Variable
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# --- ការកំណត់ Tesseract Path សម្រាប់ Docker ---
+# --- ការកំណត់ Tesseract Path ឱ្យត្រូវជាមួយ Docker Container ---
 pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
 
 # បើកការកត់ត្រា (Logging)
@@ -41,21 +42,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ទាញយក Token ពី Environment Variable
+# ទាញយក Token ពី Environment Variable (សុវត្ថិភាពជាងការដាក់ក្នុងកូដផ្ទាល់)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# កំណត់ States នៃ Conversation
+# កំណត់ 'ស្ថានភាព' (States) នៃ Conversation
 (SELECT_ACTION, WAITING_FOR_FILE_TO_PDF, WAITING_FOR_PDF_TO_IMG,
  WAITING_FOR_FILES_TO_MERGE, WAITING_FOR_SPLIT_FILE, WAITING_FOR_SPLIT_RANGE,
  WAITING_FOR_COMPRESS, WAITING_FOR_IMG_TO_PDF, WAITING_FOR_IMG_TO_TEXT_FILE,
  WAITING_FOR_AUDIO_FILE, WAITING_FOR_VIDEO_FILE, WAITING_FOR_FILES_TO_ZIP,
  WAITING_FOR_ARCHIVE_TO_EXTRACT) = range(13)
 
-# --- មុខងារ Menu ដើមរបស់អ្នក (រក្សាទុកដូចមុន) ---
+# --- មុខងារសម្រាប់ប្តូរ State (ដោះស្រាយបញ្ហា TypeError: object int can't be used in 'await') ---
+
+async def prepare_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🔍 សូមផ្ញើរូបភាពដែលមានអក្សរមកឱ្យខ្ញុំ (គាំទ្រភាសាខ្មែរ និងអង់គ្លេស)។")
+    return WAITING_FOR_IMG_TO_TEXT_FILE
+
+async def prepare_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("🎥 សូមផ្ញើឯកសារវីដេអូដែលអ្នកចង់បំប្លែង។")
+    return WAITING_FOR_VIDEO_FILE
+
+# --- មុខងារ Menu ចម្បង ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    text = "សួស្តី! ខ្ញុំគឺជា Bot បំប្លែងឯកសារ។ សូមជ្រើសរើសមុខងារខាងក្រោម៖"
+    # ប្តូរពី callback_query_data ទៅជា callback_data
     keyboard = [
         [InlineKeyboardButton("📄 ឯកសារទៅជា PDF", callback_data='to_pdf'),
          InlineKeyboardButton("🖼️ PDF ទៅជារូបភាព", callback_data='pdf_to_img')],
@@ -70,31 +84,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("📂 ពន្លាឯកសារ (Unzip)", callback_data='extract_zip')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    if query:
-        await query.answer()
-        await query.edit_message_text(text, reply_markup=reply_markup)
+    text = "សួស្តី! ខ្ញុំគឺជា Bot បំប្លែងឯកសារ។ សូមជ្រើសរើសមុខងារខាងក្រោម៖"
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
     else:
         await update.message.reply_text(text, reply_markup=reply_markup)
     return SELECT_ACTION
 
-# --- មុខងារ OCR ដែលបានកែសម្រួលឱ្យដើរលើ Docker ---
+# --- មុខងារ OCR ដើរលើ Docker (គាំទ្រភាសាខ្មែរ) ---
+
 async def receive_img_for_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.photo:
-        await update.message.reply_text("សូមផ្ញើរូបភាពដែលមានអក្សរ។")
+        await update.message.reply_text("❌ សូមផ្ញើរូបភាព។")
         return WAITING_FOR_IMG_TO_TEXT_FILE
     
-    status_msg = await update.message.reply_text("កំពុងអានអក្សរ... សូមរង់ចាំ។")
+    status_msg = await update.message.reply_text("⏳ កំពុងអានអក្សរ... សូមរង់ចាំ។")
     photo_file = await update.message.photo[-1].get_file()
     file_path = f"ocr_{update.message.from_user.id}.jpg"
     await photo_file.download_to_drive(file_path)
 
     try:
-        # បន្ថែមភាសាខ្មែរ និងអង់គ្លេស
-        text = pytesseract.image_to_string(Image.open(file_path), lang='khm+eng')
+        # ប្រើ Tesseract អានអក្សរខ្មែរ និងអង់គ្លេស 
+        loop = asyncio.get_running_loop()
+        text = await loop.run_in_executor(None, lambda: pytesseract.image_to_string(Image.open(file_path), lang='khm+eng'))
         
         if text.strip():
-            # ប្រសិនបើអក្សរវែងពេក ផ្ញើជាឯកសារ
             if len(text) > 4000:
                 txt_file = f"result_{update.message.from_user.id}.txt"
                 with open(txt_file, "w", encoding="utf-8") as f:
@@ -102,54 +118,57 @@ async def receive_img_for_text(update: Update, context: ContextTypes.DEFAULT_TYP
                 await update.message.reply_document(open(txt_file, 'rb'))
                 os.remove(txt_file)
             else:
-                await update.message.reply_text(f"លទ្ធផល OCR:\n\n`{text}`", parse_mode='Markdown')
+                await update.message.reply_text(f"✅ លទ្ធផល OCR:\n\n`{text}`", parse_mode='Markdown')
         else:
-            await update.message.reply_text("រកមិនឃើញអក្សរនៅក្នុងរូបភាពនេះទេ។")
+            await update.message.reply_text("⚠️ មិនអាចរកឃើញអក្សរក្នុងរូបភាពនេះទេ។")
     except Exception as e:
-        await update.message.reply_text(f"កំហុស OCR: {e}")
+        logger.error(f"OCR Error: {e}")
+        await update.message.reply_text(f"❌ កំហុស OCR: {e}")
     finally:
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        if os.path.exists(file_path): os.remove(file_path)
         await status_msg.delete()
     return await start(update, context)
 
 # --- មុខងារបំប្លែងវីដេអូ (FFmpeg) ---
+
 async def receive_video_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video = update.message.video or update.message.document
-    if not video:
-        await update.message.reply_text("សូមផ្ញើឯកសារវីដេអូ។")
-        return WAITING_FOR_VIDEO_FILE
-    
-    status_msg = await update.message.reply_text("កំពុងបំប្លែងវីដេអូ... នេះអាចប្រើពេលបន្តិច។")
+    status_msg = await update.message.reply_text("⏳ កំពុងដំណើរការវីដេអូ... សូមរង់ចាំ។")
     file = await video.get_file()
     input_path = f"in_{update.message.from_user.id}.mp4"
     output_path = f"out_{update.message.from_user.id}.mp4"
     await file.download_to_drive(input_path)
 
     try:
-        # ប្រើ FFmpeg បំប្លែង (ឧទាហរណ៍៖ បង្រួម ឬប្តូរ format)
-        ffmpeg.input(input_path).output(output_path, vcodec='libx264', crf=28).run(overwrite_output=True)
+        # ប្រើ FFmpeg សម្រាប់ដំណើរការវីដេអូ 
+        process = (
+            ffmpeg
+            .input(input_path)
+            .output(output_path, vcodec='libx264', crf=28, preset='faster')
+            .overwrite_output()
+        )
+        await asyncio.to_thread(process.run)
         await update.message.reply_video(video=open(output_path, 'rb'))
     except Exception as e:
-        await update.message.reply_text(f"កំហុស FFmpeg: {e}")
+        await update.message.reply_text(f"❌ កំហុស FFmpeg: {e}")
     finally:
         for p in [input_path, output_path]:
             if os.path.exists(p): os.remove(p)
         await status_msg.delete()
     return await start(update, context)
 
-# (សូមបញ្ចូល Logic ផ្សេងទៀតរបស់អ្នកដូចជា PDF Merge, Split, etc. ចូលមកវិញតាមធម្មតា)
-
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("ប្រតិបត្តិការត្រូវបានបោះបង់។")
+    await update.message.reply_text("✅ ប្រតិបត្តិការត្រូវបានបោះបង់។")
     return ConversationHandler.END
+
+# --- ចំណុចចាប់ផ្តើមកម្មវិធី ---
 
 def main():
     if not BOT_TOKEN:
-        print("Error: BOT_TOKEN variable is not set!")
+        print("❌ Error: BOT_TOKEN is not set in Environment Variables!")
         return
 
-    # រត់ Web Server ក្នុង Thread ផ្សេង
+    # រត់ Flask Web Server ក្នុង Thread បំបែក ដើម្បីកុំឱ្យ Render Shutdown
     threading.Thread(target=run_flask, daemon=True).start()
 
     application = Application.builder().token(BOT_TOKEN).build()
@@ -159,20 +178,19 @@ def main():
         states={
             SELECT_ACTION: [
                 CallbackQueryHandler(start, pattern='^main_menu$'),
-                CallbackQueryHandler(lambda u, c: WAITING_FOR_IMG_TO_TEXT_FILE, pattern='^img_to_text$'),
-                CallbackQueryHandler(lambda u, c: WAITING_FOR_VIDEO_FILE, pattern='^video_conv$'),
-                # បន្ថែម Callback ផ្សេងៗទៀតរបស់អ្នកនៅទីនេះ...
+                CallbackQueryHandler(prepare_ocr, pattern='^img_to_text$'), # ប្តូរពី lambda មក function
+                CallbackQueryHandler(prepare_video, pattern='^video_conv$'), # ប្តូរពី lambda មក function
             ],
             WAITING_FOR_IMG_TO_TEXT_FILE: [MessageHandler(filters.PHOTO, receive_img_for_text)],
             WAITING_FOR_VIDEO_FILE: [MessageHandler(filters.VIDEO | filters.Document.VIDEO, receive_video_file)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True
     )
 
     application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("start", start))
-
-    print("Bot is starting...")
+    
+    print("🚀 Bot is starting...")
     application.run_polling()
 
 if __name__ == '__main__':
