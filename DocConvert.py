@@ -57,19 +57,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     text = "សួស្តី! ខ្ញុំគឺជា Bot បំប្លែងឯកសារ។ សូមជ្រើសរើសមុខងារខាងក្រោម៖"
     keyboard = [
-        [InlineKeyboardButton("📄 ឯកសារទៅជា PDF", callback_query_data='to_pdf'),
-         InlineKeyboardButton("🖼️ PDF ទៅជារូបភាព", callback_query_data='pdf_to_img')],
-        [InlineKeyboardButton("➕ បញ្ចូល PDF", callback_query_data='merge_pdf'),
-         InlineKeyboardButton("✂️ កាត់ PDF", callback_query_data='split_pdf')],
-        [InlineKeyboardButton("🗜️ បង្រួម PDF", callback_query_data='compress_pdf'),
-         InlineKeyboardButton("🖼️ រូបភាពទៅជា PDF", callback_query_data='img_to_pdf')],
-        [InlineKeyboardButton("🔍 រូបភាពទៅជាអក្សរ (OCR)", callback_query_data='img_to_text')],
-        [InlineKeyboardButton("🎵 បំប្លែងសំឡេង", callback_query_data='audio_conv'),
-         InlineKeyboardButton("🎥 បំប្លែងវីដេអូ", callback_query_data='video_conv')],
-        [InlineKeyboardButton("📦 បង្កើត ZIP", callback_query_data='make_zip'),
-         InlineKeyboardButton("📂 ពន្លាឯកសារ (Unzip)", callback_query_data='extract_zip')]
+        [InlineKeyboardButton("📄 ឯកសារទៅជា PDF", callback_data='to_pdf'),
+         InlineKeyboardButton("🖼️ PDF ទៅជារូបភាព", callback_data='pdf_to_img')],
+        [InlineKeyboardButton("➕ បញ្ចូល PDF", callback_data='merge_pdf'),
+         InlineKeyboardButton("✂️ កាត់ PDF", callback_data='split_pdf')],
+        [InlineKeyboardButton("🗜️ បង្រួម PDF", callback_data='compress_pdf'),
+         InlineKeyboardButton("🖼️ រូបភាពទៅជា PDF", callback_data='img_to_pdf')],
+        [InlineKeyboardButton("🔍 រូបភាពទៅជាអក្សរ (OCR)", callback_data='img_to_text')],
+        [InlineKeyboardButton("🎵 បំប្លែងសំឡេង", callback_data='audio_conv'),
+         InlineKeyboardButton("🎥 បំប្លែងវីដេអូ", callback_data='video_conv')],
+        [InlineKeyboardButton("📦 បង្កើត ZIP", callback_data='make_zip'),
+         InlineKeyboardButton("📂 ពន្លាឯកសារ (Unzip)", callback_data='extract_zip')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    
     if query:
         await query.answer()
         await query.edit_message_text(text, reply_markup=reply_markup)
